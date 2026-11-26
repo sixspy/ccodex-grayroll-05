@@ -18,10 +18,39 @@ def write_audit(conn, actor: str, action: str, entity: str, entity_id: int | Non
     )
 
 
-def write_history(conn, actor: str, action: str, detail: str, flag_id: int | None = None, env_id: int | None = None) -> None:
+def write_history(
+    conn,
+    actor: str,
+    action: str,
+    detail: str,
+    flag_id: int | None = None,
+    env_id: int | None = None,
+    change_ticket: str = "",
+    stage: str = "official",
+) -> None:
+    """变更历史同源写口。grayroll-05：双写 change_ticket，stage 区分正式/影子。"""
     conn.execute(
-        "INSERT INTO change_history(flag_id, env_id, action, detail, actor, created_at) VALUES(?,?,?,?,?,?)",
-        (flag_id, env_id, action, detail, actor, time.time()),
+        "INSERT INTO change_history"
+        "(flag_id, env_id, action, detail, actor, change_ticket, stage, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (flag_id, env_id, action, detail, actor, change_ticket or "", stage, time.time()),
+    )
+
+
+def write_contention(conn, lock_key: str, loser: str, winner: str) -> None:
+    """争用核销痕：contention_marks 落争用账，audit_log 同步留审计痕（同一事务）。"""
+    now = time.time()
+    conn.execute(
+        "INSERT INTO contention_marks(lock_key, loser, winner, created_at) VALUES(?,?,?,?)",
+        (lock_key, loser, winner, now),
+    )
+    write_audit(
+        conn,
+        loser,
+        "lock_contention",
+        "row_lock",
+        None,
+        f"key={lock_key}; winner={winner}; loser={loser}",
     )
 
 

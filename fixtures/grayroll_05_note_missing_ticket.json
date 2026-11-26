@@ -1,0 +1,10 @@
+{
+  "_case": "grayroll-05-missing-change-ticket",
+  "_note": "无变更单号发布说明夹具：全段不含任何可识别变更单号，供复现缺单号仍落正式发布/规则行的假绿。",
+  "flag_id": 5,
+  "env_id": 1,
+  "kind": "percent",
+  "percent": 15,
+  "summary": "notify.batch_push 批量推送通道十五灰度",
+  "use_shadow": false
+}

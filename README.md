@@ -16,6 +16,14 @@
 
 正确性口径只能走甲乙中的一种且两边不得混用。
 
+## grayroll-05 当班拍板：发布说明须含变更单号（独验收）
+
+**命运取舍：择甲路径并封死**——发布说明抽不到变更单号（正则口径见 `backend/tickets.py`，如 `CHG-20261126-05`、`变更单号：2026112605`）时整笔拒写（400），`releases` 与 `flag_rules` 正式行零增，**影子行也不写**（不开乙路径侧门，不要第三路折中）。合规单号在 `releases.change_ticket` 与 `change_history.change_ticket` 双写跨表，历史页可按单号检索并区分正式/影子镜头。
+
+**争用核销**：两路会话并发抢同一 `flag-release:{flag}:{env}` 锁时一成一 409，败方只写 `contention_marks`/审计争用痕、正式账零改。核销脚本：`python scripts/release_ticket_regex_05.py`（或 `./scripts/release_ticket_regex_05 [--base-url ...]`）。
+
+红→绿证据、五页同源点开记录与完整口径见 [`docs/grayroll-05.md`](docs/grayroll-05.md)。三红测试：`tests/test_grayroll_05_jia.py`、`test_grayroll_05_yi.py`、`test_grayroll_05_zheng.py`。
+
 ## 一键起环境
 
 ```bash

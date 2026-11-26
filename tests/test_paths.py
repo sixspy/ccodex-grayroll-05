@@ -18,7 +18,7 @@ def test_shadow_release_promote():
                 "env_id": 2,
                 "kind": "percent",
                 "percent": 5,
-                "summary": "预发影子五成试配",
+                "summary": "CHG-20261126-02 预发影子五成试配",
                 "use_shadow": True,
             },
         )

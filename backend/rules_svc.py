@@ -11,9 +11,35 @@ from auth import current_user, require_writer
 from db import connect
 from locks import acquire, release
 from policies import assert_flag_publishable, assert_not_killed_or_allow_kill, describe_path
+from tickets import extract_change_ticket
 from validators import require_int, require_percent, require_rule_kind
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
+
+
+def replace_official_rule(
+    conn, fid: int, eid: int, kind: str, pct: int, cohort_id, now: float, change_ticket: str
+):
+    """规则服务正式写口（grayroll-05 甲路径）。
+
+    任何正式 flag_rules 行的替换/新增都必须带可识别变更单号；缺单号直接 400，
+    调用方事务随异常回滚，规则正式账零增。返回 (version, rule_id)。
+    """
+    ticket = extract_change_ticket(change_ticket or "")
+    if not ticket:
+        raise HTTPException(400, detail="正式规则写入缺少有效变更单号，规则正式账零增")
+    old = conn.execute(
+        "SELECT * FROM flag_rules WHERE flag_id=? AND env_id=? AND official=1", (fid, eid)
+    ).fetchone()
+    ver = (old["version"] + 1) if old else 1
+    if old:
+        conn.execute("DELETE FROM flag_rules WHERE id=?", (old["id"],))
+    cur = conn.execute(
+        "INSERT INTO flag_rules(flag_id, env_id, kind, percent, cohort_id, version, official, updated_at) "
+        "VALUES(?,?,?,?,?,?,1,?)",
+        (fid, eid, kind, pct, cohort_id, ver, now),
+    )
+    return ver, cur.lastrowid
 
 
 class ShadowBindIn(BaseModel):
@@ -22,6 +48,7 @@ class ShadowBindIn(BaseModel):
     kind: str
     percent: int = 0
     cohort_id: int | None = None
+    change_ticket: str | None = None
 
 
 @router.get("")
@@ -59,6 +86,10 @@ def shadow_bind(body: ShadowBindIn, authorization: str | None = Header(default=N
     eid = require_int(body.env_id, "环境", 1)
     kind = require_rule_kind(body.kind)
     pct = require_percent(body.percent)
+    raw_ticket = (body.change_ticket or "").strip()
+    ticket = extract_change_ticket(raw_ticket)
+    if raw_ticket and not ticket:
+        raise HTTPException(400, detail="变更单号格式无法识别，示例 CHG-20261126-05")
     key = f"flag-rule:{fid}:{eid}"
     with connect() as conn:
         acquire(conn, key, user["username"])
@@ -76,15 +107,21 @@ def shadow_bind(body: ShadowBindIn, authorization: str | None = Header(default=N
                 raise HTTPException(404, detail="人群不存在")
             now = time.time()
             cur = conn.execute(
-                "INSERT INTO rule_shadows(flag_id, env_id, kind, percent, cohort_id, status, created_at, created_by) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (fid, eid, kind, pct, body.cohort_id, "open", now, user["username"]),
+                "INSERT INTO rule_shadows(flag_id, env_id, kind, percent, cohort_id, status, "
+                "change_ticket, created_at, created_by) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (fid, eid, kind, pct, body.cohort_id, "open", ticket, now, user["username"]),
             )
             sid = cur.lastrowid
             write_audit(conn, user["username"], "rule_shadow", "rule_shadow", sid, describe_path("cohort_bind", True))
-            write_history(conn, user["username"], "rule_shadow", f"影子绑定 flag={fid} env={eid}", flag_id=fid, env_id=eid)
+            write_history(
+                conn, user["username"], "rule_shadow",
+                f"影子绑定 flag={fid} env={eid}", flag_id=fid, env_id=eid,
+                change_ticket=ticket, stage="shadow",
+            )
             conn.commit()
-            return {"mode": "shadow", "id": sid, "path": describe_path("cohort_bind", True)}
+            return {"mode": "shadow", "id": sid, "change_ticket": ticket,
+                    "path": describe_path("cohort_bind", True)}
         finally:
             release(conn, key, user["username"])
             conn.commit()
@@ -102,26 +139,29 @@ def promote_rule_shadow(shadow_id: int, authorization: str | None = Header(defau
         key = f"flag-rule:{fid}:{eid}"
         acquire(conn, key, user["username"])
         try:
+            # 拿锁后重读，防止并发重复升正。
+            sh = conn.execute("SELECT * FROM rule_shadows WHERE id=?", (shadow_id,)).fetchone()
+            if not sh or sh["status"] != "open":
+                raise HTTPException(400, detail="影子绑定不可升正或已被处理")
+            ticket = sh["change_ticket"] if "change_ticket" in sh.keys() else ""
+            ticket = extract_change_ticket(ticket or "")
+            if not ticket:
+                # 甲路径封死规则正式口：无单号出处的影子绑定不得升正为正式规则行。
+                raise HTTPException(400, detail="规则影子缺少变更单号出处，不可升正，正式规则零改")
             now = time.time()
-            old = conn.execute(
-                "SELECT * FROM flag_rules WHERE flag_id=? AND env_id=? AND official=1", (fid, eid)
-            ).fetchone()
-            ver = (old["version"] + 1) if old else 1
-            if old:
-                conn.execute("DELETE FROM flag_rules WHERE id=?", (old["id"],))
-            cur = conn.execute(
-                "INSERT INTO flag_rules(flag_id, env_id, kind, percent, cohort_id, version, official, updated_at) "
-                "VALUES(?,?,?,?,?,?,1,?)",
-                (fid, eid, sh["kind"], sh["percent"], sh["cohort_id"], ver, now),
+            ver, rid = replace_official_rule(
+                conn, fid, eid, sh["kind"], sh["percent"], sh["cohort_id"], now, ticket
             )
-            rid = cur.lastrowid
             conn.execute("UPDATE rule_shadows SET status='promoted' WHERE id=?", (shadow_id,))
             if conn.execute("SELECT status FROM flags WHERE id=?", (fid,)).fetchone()["status"] == "draft":
                 conn.execute("UPDATE flags SET status='active' WHERE id=?", (fid,))
-            write_history(conn, user["username"], "rule_promote", f"影子规则升正 v{ver}", flag_id=fid, env_id=eid)
+            write_history(
+                conn, user["username"], "rule_promote", f"影子规则升正 v{ver}",
+                flag_id=fid, env_id=eid, change_ticket=ticket, stage="official",
+            )
             write_audit(conn, user["username"], "rule_promote", "flag_rule", rid, f"from_shadow={shadow_id}")
             conn.commit()
-            return {"id": rid, "version": ver, "mode": "official"}
+            return {"id": rid, "version": ver, "mode": "official", "change_ticket": ticket}
         finally:
             release(conn, key, user["username"])
             conn.commit()
