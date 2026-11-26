@@ -24,14 +24,7 @@ export const EvaluateView = {
       <div class="field"><label>主体键</label><input v-model="form.subject_key" /></div>
       <button class="btn" @click="run">求值</button>
       <div class="err" v-if="err">{{ err }}</div>
-      <div v-if="result" style="margin-top:0.7rem">
-        <p class="hint" style="border-left-color:#3fb950">
-          命中版本 <b>v{{ result.version ?? '-' }}</b>
-          ｜同源变更单号 <b><code>{{ result.change_ticket || '无' }}</code></b>
-          ｜reason={{ result.reason }}
-        </p>
-        <pre>{{ result }}</pre>
-      </div>
+      <pre v-if="result" style="margin-top:0.8rem">{{ result }}</pre>
     </div>
     <div class="panel span-7">
       <h2>正式规则板</h2>

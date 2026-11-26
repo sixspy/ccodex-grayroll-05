@@ -1,6 +1,5 @@
 from fastapi.testclient import TestClient
 from app import app
-import db
 
 
 def _h(client):
@@ -29,10 +28,6 @@ def test_schedule_list():
 def test_restore_killed_flag():
     with TestClient(app) as client:
         h = _h(client)
-        # 隔离共享单文件库的历史污染：显式把 flag 4 复位为 killed（种子口径）。
-        with db.connect() as conn:
-            conn.execute("UPDATE flags SET status='killed' WHERE id=4")
-            conn.commit()
         # flag 4 is killed in seed
         r = client.post(
             "/api/restore",

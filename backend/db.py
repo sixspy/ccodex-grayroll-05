@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 
 from models import DOMAIN, PRODUCT_NAME, SKELETON, SUB_DIRECTION, USERS
-from tickets import extract_change_ticket
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
-# grayroll-05：允许并发脚本/临时验收库经 GRAYROLL_DB 指到独立库；缺省仍走单文件库路径。
-DB_PATH = Path(os.environ.get("GRAYROLL_DB", str(DATA / "app.db")))
+DB_PATH = DATA / "app.db"
 FIXTURES = ROOT / "fixtures"
 FRONTEND = ROOT / "frontend"
 
@@ -26,10 +23,9 @@ PRODUCT_META = {
 
 def connect() -> sqlite3.Connection:
     DATA.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10.0)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -82,7 +78,6 @@ CREATE TABLE IF NOT EXISTS rule_shadows(
   percent INTEGER NOT NULL DEFAULT 0,
   cohort_id INTEGER REFERENCES cohorts(id),
   status TEXT NOT NULL,
-  change_ticket TEXT NOT NULL DEFAULT '',
   created_at REAL NOT NULL,
   created_by TEXT NOT NULL
 );
@@ -94,7 +89,6 @@ CREATE TABLE IF NOT EXISTS releases(
   summary TEXT NOT NULL,
   status TEXT NOT NULL,
   official INTEGER NOT NULL DEFAULT 1,
-  change_ticket TEXT NOT NULL DEFAULT '',
   published_at REAL,
   published_by TEXT
 );
@@ -107,7 +101,6 @@ CREATE TABLE IF NOT EXISTS release_shadows(
   percent INTEGER NOT NULL DEFAULT 0,
   cohort_id INTEGER REFERENCES cohorts(id),
   status TEXT NOT NULL,
-  change_ticket TEXT NOT NULL DEFAULT '',
   created_at REAL NOT NULL,
   created_by TEXT NOT NULL
 );
@@ -147,8 +140,6 @@ CREATE TABLE IF NOT EXISTS change_history(
   action TEXT NOT NULL,
   detail TEXT NOT NULL,
   actor TEXT NOT NULL,
-  change_ticket TEXT NOT NULL DEFAULT '',
-  stage TEXT NOT NULL DEFAULT 'official',
   created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_log(
@@ -163,7 +154,6 @@ CREATE TABLE IF NOT EXISTS audit_log(
 CREATE TABLE IF NOT EXISTS row_locks(
   lock_key TEXT PRIMARY KEY,
   holder TEXT NOT NULL,
-  owner_nonce TEXT NOT NULL DEFAULT '',
   expires_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS contention_marks(
@@ -289,54 +279,8 @@ def seed(conn: sqlite3.Connection) -> None:
     conn.execute("INSERT INTO experiment_bridge_stub(id, note) VALUES(1, ?)", ("实验平台桥接空桩未接通",))
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-    if column not in _table_columns(conn, table):
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-
-
-def migrate(conn: sqlite3.Connection) -> None:
-    """旧单文件库平滑补列（幂等），并从既有说明/详情回填变更单号与正影标记。"""
-    _ensure_column(conn, "releases", "change_ticket", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "release_shadows", "change_ticket", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "rule_shadows", "change_ticket", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "change_history", "change_ticket", "TEXT NOT NULL DEFAULT ''")
-    _ensure_column(conn, "change_history", "stage", "TEXT NOT NULL DEFAULT 'official'")
-    _ensure_column(conn, "row_locks", "owner_nonce", "TEXT NOT NULL DEFAULT ''")
-    # 索引必须在旧库 ALTER 补列之后再建，否则 executescript 阶段会引用不存在的列。
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_change_history_ticket "
-        "ON change_history(change_ticket)"
-    )
-    conn.execute(
-        "UPDATE change_history SET stage='shadow' "
-        "WHERE stage='official' AND action LIKE '%shadow%'"
-    )
-    for table, source_col in (
-        ("releases", "summary"),
-        ("release_shadows", "summary"),
-        ("change_history", "detail"),
-    ):
-        cols = _table_columns(conn, table)
-        if "change_ticket" not in cols or source_col not in cols:
-            continue
-        rows = conn.execute(
-            f"SELECT id, {source_col} AS src FROM {table} WHERE change_ticket=''"
-        ).fetchall()
-        for row in rows:
-            ticket = extract_change_ticket(row["src"] or "")
-            if ticket:
-                conn.execute(
-                    f"UPDATE {table} SET change_ticket=? WHERE id=?", (ticket, row["id"])
-                )
-
-
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
         seed(conn)
-        migrate(conn)
         conn.commit()

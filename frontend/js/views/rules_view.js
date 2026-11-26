@@ -3,7 +3,7 @@ const { ref, onMounted } = Vue;
 export const RulesView = {
   setup() {
     const official = ref([]); const shadows = ref([]);
-    const form = ref({ flag_id: 3, env_id: 2, kind: "percent", percent: 10, cohort_id: null, change_ticket: "CHG-20261126-03" });
+    const form = ref({ flag_id: 3, env_id: 2, kind: "percent", percent: 10, cohort_id: null });
     const err = ref(""); const msg = ref("");
     async function reload() {
       const res = await api("/api/rules");
@@ -36,7 +36,6 @@ export const RulesView = {
         <select v-model="form.kind"><option>percent</option><option>cohort</option><option>percent_and_cohort</option></select>
       </div>
       <div class="field"><label>比例</label><input type="number" v-model.number="form.percent" /></div>
-      <div class="field"><label>变更单号（升正为正式规则时必备，如 CHG-20261126-03）</label><input v-model="form.change_ticket" placeholder="CHG-20261126-03" /></div>
       <button class="btn" @click="shadowBind">写入影子</button>
       <p class="muted" v-if="msg">{{ msg }}</p>
       <div class="err" v-if="err">{{ err }}</div>
@@ -50,12 +49,10 @@ export const RulesView = {
         </tr>
       </tbody></table>
       <h2 style="margin-top:1rem">影子草案</h2>
-      <table><thead><tr><th>ID</th><th>开关</th><th>环境</th><th>单号</th><th>状态</th><th></th></tr></thead>
+      <table><thead><tr><th>ID</th><th>开关</th><th>环境</th><th>状态</th><th></th></tr></thead>
       <tbody>
         <tr v-for="s in shadows" :key="s.id">
-          <td>{{ s.id }}</td><td>{{ s.flag_id }}</td><td>{{ s.env_id }}</td>
-          <td><code>{{ s.change_ticket || '缺单号不可升正' }}</code></td>
-          <td>{{ s.status }}</td>
+          <td>{{ s.id }}</td><td>{{ s.flag_id }}</td><td>{{ s.env_id }}</td><td>{{ s.status }}</td>
           <td><button class="btn secondary" v-if="s.status==='open'" @click="promote(s.id)">升正</button></td>
         </tr>
       </tbody></table>

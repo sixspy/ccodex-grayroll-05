@@ -65,14 +65,6 @@ def evaluate(body: EvalIn, authorization: str | None = Header(default=None)):
             "SELECT * FROM flag_rules WHERE flag_id=? AND env_id=? AND official=1",
             (fl["id"], env["id"]),
         ).fetchone()
-        rel = conn.execute(
-            "SELECT change_ticket FROM releases WHERE flag_id=? AND env_id=? AND official=1 "
-            "ORDER BY id DESC LIMIT 1",
-            (fl["id"], env["id"]),
-        ).fetchone()
-        change_ticket = ""
-        if rel is not None and "change_ticket" in rel.keys():
-            change_ticket = rel["change_ticket"] or ""
         if not rule:
             return {
                 "enabled": False,
@@ -80,7 +72,6 @@ def evaluate(body: EvalIn, authorization: str | None = Header(default=None)):
                 "flag_key": flag_key,
                 "env_code": env_code,
                 "subject_key": subject,
-                "change_ticket": change_ticket or None,
             }
         percent_hit = eval_percent(subject, int(rule["percent"]), flag_key)
         cohort_hit = False
@@ -100,7 +91,6 @@ def evaluate(body: EvalIn, authorization: str | None = Header(default=None)):
             "percent_hit": percent_hit,
             "cohort_hit": cohort_hit,
             "version": rule["version"],
-            "change_ticket": change_ticket or None,
             "flag_key": flag_key,
             "env_code": env_code,
             "subject_key": subject,

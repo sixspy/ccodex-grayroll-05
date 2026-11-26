@@ -1,3 +1,0 @@
-#!/bin/sh
-# grayroll-05 争用侧两路并发双请求入口（无扩展名 mandated name 包装）。
-exec python3 "$(dirname "$0")/release_ticket_regex_05.py" "$@"

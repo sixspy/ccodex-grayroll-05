@@ -51,7 +51,7 @@ def test_publish_official():
                 "env_id": 1,
                 "kind": "percent",
                 "percent": 15,
-                "summary": "CHG-20261126-01 开发环境十五灰度",
+                "summary": "开发环境十五灰度",
                 "use_shadow": False,
             },
         )
